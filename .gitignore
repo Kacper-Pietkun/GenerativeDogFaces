@@ -1,0 +1,15 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# Dataset folder
+data/
+
+# Results folder
+results/
+
+# Debugging
+launch.json
+
+# Private files
+private/
