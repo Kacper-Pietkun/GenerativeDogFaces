@@ -31,6 +31,26 @@ def download_datasets(args, datasets_urls):
     return paths
 
 
+def download_from_url(url, destination):
+    try:
+        response = requests.get(url, stream=True)
+        if response.status_code == 200:
+            total_size = int(response.headers.get("content-length", 0))
+            progress_bar = tqdm(total=total_size, unit='B', unit_scale=True)
+
+            with open(destination, 'wb') as file:
+                for chunk in tqdm(response.iter_content(chunk_size=1024)):
+                    file.write(chunk)
+                    progress_bar.update(len(chunk))
+
+            print(f"'{url}' downloaded successfully")
+        else:
+            raise Exception(f"Failed to download '{url}'. Status code: {response.status_code}")
+    except Exception as e:
+        print(f"An error occurred when downloading '{url}'")
+        raise
+
+
 def unzip_datasets(args, paths):
     print("Unzipping datasets...")
     saved_paths = []
@@ -46,6 +66,16 @@ def unzip_datasets(args, paths):
             continue
         saved_paths.append(os.path.join(save_path, images_folder))
     return saved_paths
+
+
+def unzip_file(zip_file, destination):
+    with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+        zip_ref.extractall(destination)
+
+
+def untar_file(tar_file, destination):
+    with tarfile.open(tar_file, 'r') as tar:
+        tar.extractall(destination)
 
 
 def merge_datasets(args, paths):
@@ -135,36 +165,6 @@ def save_splits(args, splits):
     for (split, split_name) in splits:
         save_path = os.path.join(args.destination, f"{split_name}.npy")
         np.save(save_path, split)
-
-
-def download_from_url(url, destination):
-    try:
-        response = requests.get(url, stream=True)
-        if response.status_code == 200:
-            total_size = int(response.headers.get("content-length", 0))
-            progress_bar = tqdm(total=total_size, unit='B', unit_scale=True)
-
-            with open(destination, 'wb') as file:
-                for chunk in tqdm(response.iter_content(chunk_size=1024)):
-                    file.write(chunk)
-                    progress_bar.update(len(chunk))
-
-            print(f"'{url}' downloaded successfully")
-        else:
-            raise Exception(f"Failed to download '{url}'. Status code: {response.status_code}")
-    except Exception as e:
-        print(f"An error occurred when downloading '{url}'")
-        raise
-
-
-def unzip_file(zip_file, destination):
-    with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-        zip_ref.extractall(destination)
-
-
-def untar_file(tar_file, destination):
-    with tarfile.open(tar_file, 'r') as tar:
-        tar.extractall(destination)
         
 
 def main():
