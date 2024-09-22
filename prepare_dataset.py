@@ -111,14 +111,19 @@ def crop_dog_faces(args, dataset_path):
             try:
                 file_path = os.path.join(root, file)
                 img = cv2.imread(file_path)
-                os.remove(file_path)
+                img_height = img.shape[0]
+                img_width = img.shape[1]
 
                 outputs = detector(img, upsample_num_times=1)
                 for i, output in enumerate(outputs):
-                    if output.confidence <= 0.8:
+                    if output.confidence <= 0.3:
                         continue
 
-                    crop_img = img[output.rect.top():output.rect.bottom(), output.rect.left():output.rect.right()]
+                    top = min(max(output.rect.top(), 0), img_height)
+                    bottom = min(max(output.rect.bottom(), 0), img_height)
+                    left = min(max(output.rect.left(), 0), img_width)
+                    right = min(max(output.rect.right(), 0), img_width)
+                    crop_img = img[top:bottom, left:right]
                     save_path = os.path.join(save_cropped_faces_path, f"cropped_{i}_{file}")
                     cv2.imwrite(save_path, crop_img)
             except:
@@ -128,8 +133,7 @@ def crop_dog_faces(args, dataset_path):
 
 def preprocess_images(dataset_path):
     print("Preprocessing images...")
-    transform_with_sharpness = transforms.Compose([transforms.Grayscale(),
-                                                   transforms.Resize((64, 64)),
+    transform_with_sharpness = transforms.Compose([transforms.Resize((64, 64)),
                                                    transforms.RandomAdjustSharpness(sharpness_factor=3, p=1.0),
                                                    transforms.ToTensor()])
     dataset = datasets.ImageFolder(dataset_path, transform=transform_with_sharpness)
