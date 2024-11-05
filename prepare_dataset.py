@@ -134,7 +134,6 @@ def crop_dog_faces(args, dataset_path):
 def preprocess_images(dataset_path):
     print("Preprocessing images...")
     transform_with_sharpness = transforms.Compose([transforms.Resize((64, 64)),
-                                                   transforms.RandomAdjustSharpness(sharpness_factor=3, p=1.0),
                                                    transforms.ToTensor()])
     dataset = datasets.ImageFolder(dataset_path, transform=transform_with_sharpness)
     dataset_tensor = torch.stack([img for img, _ in dataset])
