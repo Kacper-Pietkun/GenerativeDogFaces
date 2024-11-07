@@ -3,11 +3,13 @@ import torch.nn as nn
 
 
 class VAE(nn.Module):
-    def __init__(self, embedding_size, device):
+    def __init__(self, in_channels, embedding_size, device):
         super().__init__()
 
-        self.encoder = Encoder(embedding_size, device).to(device)
-        self.decoder = Decoder(embedding_size, device).to(device)
+        hidden_channels = [32, 64, 128, 256, 512]
+        self.encoder = Encoder(in_channels, hidden_channels, embedding_size, device).to(device)
+        hidden_channels.reverse()
+        self.decoder = Decoder(in_channels, hidden_channels, embedding_size, device).to(device)
 
     def forward(self, input):
         z, means, log_vars = self.encoder(input)
@@ -16,40 +18,30 @@ class VAE(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, embedding_size, device):
+    def __init__(self, in_channels, hidden_channels, embedding_size, device):
         super().__init__()
         self.embedding_size = embedding_size
         self.device = device
 
         self.layers = nn.ModuleList()
 
-        self.layers.append(nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=(3,3), stride=2),
-            nn.ReLU(),
-            nn.Dropout(0.5)
-        ))
-        
-        self.layers.append(nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=(3,3), stride=2),
-            nn.ReLU(),
-            nn.Dropout(0.5)
-        ))
-        
-        self.layers.append(nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=(3,3), stride=2),
-            nn.ReLU(),
-            nn.Flatten(),
-            nn.Dropout(0.5)
-        ))
+        hidden_channels = [in_channels] + hidden_channels
+        for i in range(len(hidden_channels) - 1):
+            self.layers.append(nn.Sequential(
+                nn.Conv2d(hidden_channels[i], hidden_channels[i+1], kernel_size=(3,3), stride=2, padding=1),
+                nn.BatchNorm2d(hidden_channels[i+1]),
+                nn.LeakyReLU(),
+            ))
+
+        self.layers.append(nn.Flatten())
         
         self.block_mean = nn.Sequential(
-            nn.Linear(6272, self.embedding_size),
+            nn.Linear(2048, self.embedding_size),
         )
 
         self.block_log_var = nn.Sequential(
-            nn.Linear(6272, self.embedding_size),
+            nn.Linear(2048, self.embedding_size),
         )
-
 
     def forward(self, input):
         z = input
@@ -65,7 +57,7 @@ class Encoder(nn.Module):
   
 
 class Decoder(nn.Module):
-    def __init__(self, embedding_size, device):
+    def __init__(self, out_channels, hidden_channels, embedding_size, device):
         super().__init__()
         self.embedding_size = embedding_size
         self.device = device
@@ -73,53 +65,22 @@ class Decoder(nn.Module):
         self.layers = nn.ModuleList()
 
         self.layers.append(nn.Sequential(
-            nn.Linear(in_features=self.embedding_size, out_features=256*4*4),
-            nn.ReLU(),
+            nn.Linear(in_features=self.embedding_size, out_features=2048),
+            nn.Unflatten(dim=1, unflattened_size=(512, 2, 2)),
         ))
+        
+        for i in range(len(hidden_channels) - 1):
+            self.layers.append(nn.Sequential(
+                nn.ConvTranspose2d(hidden_channels[i], hidden_channels[i+1], kernel_size=(3,3), stride=2, padding=1, output_padding=1),
+                nn.BatchNorm2d(hidden_channels[i+1]),
+                nn.LeakyReLU(),
+            ))
 
         self.layers.append(nn.Sequential(
-            nn.Unflatten(dim=1, unflattened_size=(256, 4, 4)),
-            nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=2, stride=2),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1, bias=True),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1, bias=True),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-        ))
-
-        self.layers.append(nn.Sequential(
-            nn.ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=2, stride=2),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=True),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=True),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-        ))
-        
-        self.layers.append(nn.Sequential(
-            nn.ConvTranspose2d(in_channels=64, out_channels=32, kernel_size=2, stride=2),
-            nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=True),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, 32, kernel_size=3, padding=1, bias=True),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-        ))
-        
-        self.layers.append(nn.Sequential(
-            nn.ConvTranspose2d(in_channels=32, out_channels=16, kernel_size=2, stride=2),
-            nn.Conv2d(16, 16, kernel_size=3, padding=1, bias=True),
-            nn.BatchNorm2d(16),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(16, 16, kernel_size=3, padding=1, bias=True),
-            nn.BatchNorm2d(16),
-            nn.ReLU(inplace=True),
-        ))
-        
-        self.layers.append(nn.Sequential(
-            nn.Conv2d(in_channels=16, out_channels=3, kernel_size=1, stride=1),
+            nn.ConvTranspose2d(hidden_channels[-1], hidden_channels[-1], kernel_size=(3,3), stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(hidden_channels[-1]),
+            nn.LeakyReLU(),
+            nn.Conv2d(in_channels=hidden_channels[-1], out_channels=out_channels, kernel_size=(3,3), padding=1),
             nn.Sigmoid()
         ))
         

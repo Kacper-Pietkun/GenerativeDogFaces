@@ -1,6 +1,8 @@
 import os
 import math
 import torch
+from torch.utils.data import Dataset
+
 
 
 class ModelSaver():
@@ -37,3 +39,15 @@ class BetaCyclicalAnnealing():
         if tau > self.R:
             return 1
         return self.f_a * tau + self.f_b
+    
+
+class TensorDatasetWithAugmentations(Dataset):
+    def __init__(self, tensor, transforms):
+        self.tensor = tensor
+        self.transforms = transforms
+    
+    def __getitem__(self, index):
+        return self.transforms(self.tensor[index])
+    
+    def __len__(self):
+        return self.tensor.shape[0]
