@@ -1,11 +1,14 @@
 import os
+import math
 import torch
 import numpy as np
 import torch.nn as nn
+from torch.nn import functional as F
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from utils import ModelSaver, BetaCyclicalAnnealing
+from utils import ModelSaver, BetaCyclicalAnnealing, TensorDatasetWithAugmentations
 from torch.utils.data import DataLoader
+from torchvision.transforms import v2
 from argparse import ArgumentParser
 from vae_model import VAE
 from tqdm import tqdm
@@ -19,20 +22,32 @@ parser.add_argument("--dataset-path", type=str, required=True,
 parser.add_argument("--save-path", type=str, required=True,
                     help="Path to the directory where results will be saved")
 
+parser.add_argument("--gpu", type=int, default=1,
+                    help="1 - use gpu, 0 - use cpu")
+
+parser.add_argument("--epochs", type=int, default=100,
+                    help="Number of training epochs")
+
+parser.add_argument("--trial", default=None,
+                    help="Used only via optuna_search.py script")
+
+parser.add_argument("--lr", type=float, default=0.001,
+                    help="initial learning rate used during training")
+
 parser.add_argument("--embedding-size", type=int, default=128,
                     help="size of the VAE's embedding vector")
 
+parser.add_argument("--optimizer", type=str, default="Adam", choices=["Adam", "AdamW", "SGD"],
+                    help="optimizer used for model training")
+
+parser.add_argument("--weight-decay", type=float, default=0.0,
+                    help="weight decay passed to optimizer")
+
+parser.add_argument("--momentum", type=float, default=0.0,
+                    help="momentum passed to optimizer")
+
 parser.add_argument("--batch-size", type=int, default=64,
                     help="training batch size")
-
-parser.add_argument("--epochs", type=int, default=500,
-                    help="Number of training epochs")
-
-parser.add_argument("--lr", type=float, default=0.005,
-                    help="initial learning rate used during training")
-
-parser.add_argument("--gpu", type=int, default=1,
-                    help="1 - use gpu, 0 - use cpu")
 
 
 def get_device(use_gpu):
@@ -52,10 +67,10 @@ def loss_fn(original_image, predicted_image, mean, log_var, beta):
     KL divergence (along with a beta parameter given in advance)
     """
     cur_batch_size = original_image.shape[0]
-    reconstruction_loss = nn.MSELoss(reduction="none")(original_image, predicted_image).view(cur_batch_size, -1).sum()
+    reconstruction_loss = nn.MSELoss(reduction="none")(original_image, predicted_image).view(cur_batch_size, -1).sum(dim=-1)
     kl_loss = 1 + log_var - mean**2 - torch.exp(log_var)
     kl_loss = -0.5 * torch.sum(kl_loss, dim=-1)
-    return (reconstruction_loss + beta * kl_loss).mean(), reconstruction_loss.mean(), (beta * kl_loss).mean()
+    return (reconstruction_loss + beta * kl_loss).mean(), reconstruction_loss.mean(), (kl_loss).mean()
 
 
 def save_visualization_outputs(predicted_images, save_path, epoch, rows=3, cols=4):
@@ -75,9 +90,10 @@ def save_visualization_outputs(predicted_images, save_path, epoch, rows=3, cols=
     plt.close(fig)
 
 
-def create_dataloaders(args):
+def create_dataloaders(args, augmentations):
     train_set_path = os.path.join(args.dataset_path, "train_images.npy")
     train_set = np.load(train_set_path)
+    train_dataset = TensorDatasetWithAugmentations(train_set, augmentations)
 
     validation_set_path = os.path.join(args.dataset_path, "validation_images.npy")
     validation_set = np.load(validation_set_path)
@@ -85,20 +101,48 @@ def create_dataloaders(args):
     test_set_path = os.path.join(args.dataset_path, "test_images.npy")
     test_set = np.load(test_set_path)
 
-
-    train_dataloader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_dataloader = DataLoader(validation_set, batch_size=args.batch_size, shuffle=False)
     test_dataloader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
 
     return train_dataloader, val_dataloader, test_dataloader
 
+def create_optimizer(model, args):
+    optimizer = None
+    if args.optimizer == "Adam":
+        optimizer = optim.Adam(model.parameters(), lr=args.lr,
+                               weight_decay=args.weight_decay,
+                               betas=(args.momentum, 0.999))
+    elif args.optimizer == "AdamW":
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr,
+                                weight_decay=args.weight_decay,
+                                betas=(args.momentum, 0.999))
+    elif args.optimizer == "SGD":
+        optimizer = optim.SGD(model.parameters(), lr=args.lr,
+                              weight_decay=args.weight_decay,
+                              momentum=args.momentum)
+    else:
+        raise RuntimeError(f"Specified optimizer: '{args.optimizer}' is not supported")
+    return optimizer
+
+def get_augmentations(args):
+    transforms = v2.Compose([
+        v2.ToDtype(torch.uint8, scale=True),
+        v2.RandomAdjustSharpness(sharpness_factor=3, p=0.5),
+        v2.RandomEqualize(p=0.5),
+        v2.RandomAutocontrast(0.5),
+        v2.RandomHorizontalFlip(p=0.5),
+        v2.ToDtype(torch.float32, scale=True)
+    ])
+    return transforms
+
 
 def train(args, vae, train_dataloader, val_dataloader, optimizer, device, beta_cyclical_annealing, model_saver):
     iteration = 0
     history = []
+    best_val_loss = math.inf
     visualization_train_path = os.path.join(args.save_path, "visualization_train")
     visualization_val_path = os.path.join(args.save_path, "visualization_val")
-
     for epoch in range(args.epochs):
         vae.train()
         train_loss, train_rec_loss, train_kl_loss = 0, 0, 0
@@ -154,9 +198,12 @@ def train(args, vae, train_dataloader, val_dataloader, optimizer, device, beta_c
             "val_kl_loss": val_kl_loss,
         })
         model_saver.save(vae.state_dict(), val_loss)
+        best_val_loss = min(best_val_loss, val_loss)
+        if args.trial:
+            args.trial.report(val_loss, epoch) 
         print('Epoch: {} Train Loss: {:.4f} ({:.4f}, {:.4f}) Validation Loss: {:.4f} ({:.4f}, {:.4f}) '.format(epoch, train_loss, train_rec_loss, train_kl_loss,
                                                                                                                 val_loss, val_rec_loss, val_kl_loss))
-    return history
+    return history, best_val_loss
 
 
 def plot_losses(args, history):
@@ -167,7 +214,6 @@ def plot_losses(args, history):
     plt.plot(val_losses, color="b", label="Validation loss")
     plt.title("Total loss over epochs")
     plt.legend()
-    plt.show()
     plt.savefig(f"{args.save_path}/total_loss.jpg")
 
     train_losses = [epoch_dict.get("train_rec_loss") for epoch_dict in history]
@@ -177,7 +223,6 @@ def plot_losses(args, history):
     plt.plot(val_losses, color="b", label="Validation rec loss")
     plt.title("Rec loss over epochs")
     plt.legend()
-    plt.show()
     plt.savefig(f"{args.save_path}/reconstruction_loss.jpg")
 
     train_losses = [epoch_dict.get("train_kl_loss") for epoch_dict in history]
@@ -187,24 +232,26 @@ def plot_losses(args, history):
     plt.plot(val_losses, color="b", label="Validation KL loss")
     plt.title("KL loss over epochs")
     plt.legend()
-    plt.show()
     plt.savefig(f"{args.save_path}/kl_loss.jpg")
 
 
-def main():
-    args = parser.parse_args()
+def main(args):
     device = get_device(args.gpu)
-    print(device)
+    print(f"DEVICE NAME: {device}")
 
     vae = VAE(3, args.embedding_size, device).to(device)
-    train_dataloader, val_dataloader, test_dataloader = create_dataloaders(args)
-    optimizer = optim.Adam(vae.parameters(), lr=args.lr)
+    augmentations = get_augmentations(args)
+    train_dataloader, val_dataloader, _ = create_dataloaders(args, augmentations)
+    optimizer = create_optimizer(vae, args)
     model_saver = ModelSaver(args.save_path)
     beta_cyclical_annealing = BetaCyclicalAnnealing(args.epochs, len(train_dataloader))
     
-    history = train(args, vae, train_dataloader, val_dataloader, optimizer, device, beta_cyclical_annealing, model_saver)
+    history, best_val_loss = train(args, vae, train_dataloader, val_dataloader, optimizer, device, beta_cyclical_annealing, model_saver)
     plot_losses(args, history)
+
+    return best_val_loss
 
 
 if __name__ == "__main__":
-    main()
+    args = parser.parse_args()
+    main(args)
