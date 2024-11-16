@@ -43,7 +43,7 @@ parser.add_argument("--optimizer", type=str, default="Adam", choices=["Adam", "A
 parser.add_argument("--weight-decay", type=float, default=0.0,
                     help="weight decay passed to optimizer")
 
-parser.add_argument("--momentum", type=float, default=0.0,
+parser.add_argument("--momentum", type=float, default=0.99,
                     help="momentum passed to optimizer")
 
 parser.add_argument("--batch-size", type=int, default=64,
@@ -169,7 +169,7 @@ def train(args, vae, train_dataloader, val_dataloader, optimizer, device, beta_c
         val_loss, val_rec_loss, val_kl_loss = 0, 0, 0
         first_batch = None
         with torch.no_grad():
-            for  input_image in tqdm(val_dataloader):
+            for input_image in tqdm(val_dataloader):
                 input_image = input_image.to(device)
 
                 predicted_image, mean, log_var = vae(input_image)
