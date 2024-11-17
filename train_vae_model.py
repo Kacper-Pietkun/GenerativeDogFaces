@@ -1,6 +1,7 @@
 import os
 import math
 import torch
+import optuna
 import numpy as np
 import torch.nn as nn
 from torch.nn import functional as F
@@ -201,6 +202,8 @@ def train(args, vae, train_dataloader, val_dataloader, optimizer, device, beta_c
         best_val_loss = min(best_val_loss, val_loss)
         if args.trial:
             args.trial.report(val_loss, epoch) 
+            if args.trial.should_prune():
+                raise optuna.exceptions.TrialPruned()
         print('Epoch: {} Train Loss: {:.4f} ({:.4f}, {:.4f}) Validation Loss: {:.4f} ({:.4f}, {:.4f}) '.format(epoch, train_loss, train_rec_loss, train_kl_loss,
                                                                                                                 val_loss, val_rec_loss, val_kl_loss))
     return history, best_val_loss
