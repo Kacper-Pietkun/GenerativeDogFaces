@@ -6,7 +6,7 @@ class VAE(nn.Module):
     def __init__(self, in_channels, embedding_size, device):
         super().__init__()
 
-        hidden_channels = [32, 64, 128, 256, 512]
+        hidden_channels = [32, 32, 64, 64, 128, 256, 512]
         self.encoder = Encoder(in_channels, hidden_channels, embedding_size, device).to(device)
         hidden_channels.reverse()
         self.decoder = Decoder(in_channels, hidden_channels, embedding_size, device).to(device)
@@ -27,12 +27,7 @@ class Encoder(nn.Module):
 
         hidden_channels = [in_channels] + hidden_channels
         for i in range(len(hidden_channels) - 1):
-            self.layers.append(nn.Sequential(
-                nn.Conv2d(hidden_channels[i], hidden_channels[i+1], kernel_size=(3,3), stride=2, padding=1),
-                nn.BatchNorm2d(hidden_channels[i+1]),
-                nn.LeakyReLU(),
-            ))
-
+            self.layers.append(create_encoder_block(hidden_channels[i], hidden_channels[i+1]))
         self.layers.append(nn.Flatten())
         
         self.block_mean = nn.Sequential(
@@ -54,7 +49,16 @@ class Encoder(nn.Module):
         eps = standard_normal_dist.sample().to(self.device)
         z = means + torch.exp(0.5 * log_vars) * eps
         return z, means, log_vars
-  
+
+
+def create_encoder_block(in_channels, out_channels):
+    stride = 2 if (in_channels != out_channels) else 1
+    return nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=(3,3), stride=stride, padding=1),
+                nn.ReLU(),
+                nn.BatchNorm2d(out_channels),
+            )
+
 
 class Decoder(nn.Module):
     def __init__(self, out_channels, hidden_channels, embedding_size, device):
@@ -70,16 +74,12 @@ class Decoder(nn.Module):
         ))
         
         for i in range(len(hidden_channels) - 1):
-            self.layers.append(nn.Sequential(
-                nn.ConvTranspose2d(hidden_channels[i], hidden_channels[i+1], kernel_size=(3,3), stride=2, padding=1, output_padding=1),
-                nn.BatchNorm2d(hidden_channels[i+1]),
-                nn.LeakyReLU(),
-            ))
+            self.layers.append(create_decoder_block(hidden_channels[i], hidden_channels[i+1]))
 
         self.layers.append(nn.Sequential(
             nn.ConvTranspose2d(hidden_channels[-1], hidden_channels[-1], kernel_size=(3,3), stride=2, padding=1, output_padding=1),
+            nn.ReLU(),
             nn.BatchNorm2d(hidden_channels[-1]),
-            nn.LeakyReLU(),
             nn.Conv2d(in_channels=hidden_channels[-1], out_channels=out_channels, kernel_size=(3,3), padding=1),
             nn.Sigmoid()
         ))
@@ -90,3 +90,15 @@ class Decoder(nn.Module):
             out = layer(out)
         return out
   
+
+def create_decoder_block(in_channels, out_channels):
+    stride = 2 if (in_channels != out_channels) else 1
+    output_padding = 1 if (in_channels != out_channels) else 0
+    return nn.Sequential(
+                nn.ConvTranspose2d(in_channels, out_channels, kernel_size=(3,3), stride=stride, padding=1, output_padding=output_padding),
+                nn.ReLU(),
+                nn.BatchNorm2d(out_channels),
+                nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=(3,3), padding=1),
+                nn.ReLU(),
+                nn.BatchNorm2d(out_channels),
+            )
