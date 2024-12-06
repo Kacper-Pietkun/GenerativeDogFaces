@@ -8,7 +8,13 @@ class GAN(nn.Module):
         self.generator = Generator(hidden_channels, noise_dimension, device)
         hidden_channels.reverse()
         self.discriminator = Discriminatior(hidden_channels)
+        self.apply(self.init_weights)
 
+    def init_weights(self, m):
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.BatchNorm2d):
+            nn.init.normal_(m.weight, 0.0, 0.02)
+            nn.init.normal_(m.bias, 0.0, 0.02)
+        
 
 class Generator(nn.Module):
     def __init__(self, hidden_channels, noise_dimension, device):
