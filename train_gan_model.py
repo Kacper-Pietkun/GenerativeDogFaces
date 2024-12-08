@@ -14,9 +14,6 @@ from gan_model import GAN
 import matplotlib.pyplot as plt
 
 #TODO: add MIFID(Memorization Informed Frechet Inception Distance) metric
-# sieć powinna być cała ConvNet
-# Tanh zamiast sigmoida w generatorze, i zdjęcia trzeba przeskalować do [-1, 1]
-# weight initialization - a zero-centered Normal distribution with standard deviation 0.02
 
 parser = ArgumentParser("Training script for GAN")
 
@@ -63,20 +60,24 @@ def get_device(use_gpu):
         device = torch.device("cpu")
     return device
 
-def create_dataloaders(args, augmentations):
+def create_dataloaders(args):
+    train_augmentations = get_augmentations(args, is_train=True)
     train_set_path = os.path.join(args.dataset_path, "train_images.npy")
     train_set = np.load(train_set_path)
-    train_dataset = TensorDatasetWithAugmentations(train_set, augmentations)
+    train_dataset = TensorDatasetWithAugmentations(train_set, train_augmentations)
 
+    test_augmentations = get_augmentations(args, is_train=False)
     validation_set_path = os.path.join(args.dataset_path, "validation_images.npy")
     validation_set = np.load(validation_set_path)
+    validation_dataset = TensorDatasetWithAugmentations(validation_set, test_augmentations)
 
     test_set_path = os.path.join(args.dataset_path, "test_images.npy")
     test_set = np.load(test_set_path)
+    test_dataset = TensorDatasetWithAugmentations(test_set, test_augmentations)
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_dataloader = DataLoader(validation_set, batch_size=args.batch_size, shuffle=False)
-    test_dataloader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
+    val_dataloader = DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
     return train_dataloader, val_dataloader, test_dataloader
 
@@ -98,15 +99,23 @@ def create_optimizer(model, args):
         raise RuntimeError(f"Specified optimizer: '{args.optimizer}' is not supported")
     return optimizer
 
-def get_augmentations(args):
-    transforms = v2.Compose([
-        v2.ToDtype(torch.uint8, scale=True),
-        v2.RandomAdjustSharpness(sharpness_factor=3, p=0.5),
-        v2.RandomEqualize(p=0.5),
-        v2.RandomAutocontrast(0.5),
-        v2.RandomHorizontalFlip(p=0.5),
-        v2.ToDtype(torch.float32, scale=True)
-    ])
+def get_augmentations(args, is_train):
+    if is_train:
+        transforms = v2.Compose([
+            v2.ToDtype(torch.uint8, scale=True),
+            v2.RandomAdjustSharpness(sharpness_factor=3, p=0.5),
+            v2.RandomEqualize(p=0.5),
+            v2.RandomAutocontrast(0.5),
+            v2.RandomHorizontalFlip(p=0.5),
+            v2.ToDtype(torch.float32, scale=True),
+            v2.Lambda(lambda x: x * 2 - 1) 
+        ])
+    else:
+        transforms = v2.Compose([
+            v2.ToDtype(torch.float32, scale=True),
+            v2.Lambda(lambda x: x * 2 - 1) 
+        ])
+
     return transforms
 
 def save_visualization_outputs(predicted_images, save_path, epoch, rows=3, cols=4):
@@ -117,7 +126,7 @@ def save_visualization_outputs(predicted_images, save_path, epoch, rows=3, cols=
     fig = plt.figure(figsize=(18, 12))
     for idx, img in enumerate(predicted_images, 1):
         plt.subplot(rows, cols, idx)
-        plt.imshow(img.detach().numpy().transpose((1, 2, 0)))
+        plt.imshow((img.detach().numpy().transpose((1, 2, 0)) + 1) / 2)
         plt.axis("off")
     if not os.path.exists(save_path):
         os.makedirs(save_path)
@@ -205,7 +214,6 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
             generator_loss.backward()
             generator_optimizer.step()
             train_generator_loss += generator_loss.item() * bs
-
         save_visualization_outputs(fake_images[:10].cpu(), visualization_train_path, epoch)
 
         model.eval()
@@ -277,8 +285,7 @@ def main(args):
     device = get_device(args.gpu)
 
     gan = GAN(3, args.noise_dimension, device).to(device)
-    augmentations = get_augmentations(args)
-    train_dataloader, val_dataloader, _ = create_dataloaders(args, augmentations)
+    train_dataloader, val_dataloader, _ = create_dataloaders(args)
     discriminator_optimizer = create_optimizer(gan.discriminator, args)
     generator_optimizer = create_optimizer(gan.generator, args)
     model_saver = ModelSaver(args.save_path)

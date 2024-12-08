@@ -11,10 +11,12 @@ class GAN(nn.Module):
         self.apply(self.init_weights)
 
     def init_weights(self, m):
-        if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.BatchNorm2d):
-            nn.init.normal_(m.weight, 0.0, 0.02)
-            nn.init.normal_(m.bias, 0.0, 0.02)
-        
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+            nn.init.normal_(m.weight.data, 0.0, 0.02)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.normal_(m.weight.data, 1.0, 0.02)
+            nn.init.constant_(m.bias, 0.0)
+
 
 class Generator(nn.Module):
     def __init__(self, hidden_channels, noise_dimension, device):
@@ -27,14 +29,14 @@ class Generator(nn.Module):
         for i in range(len(hidden_channels) - 2):
             self.layers.append(self.create_generator_block(hidden_channels[i], hidden_channels[i + 1]))
         self.layers.append(nn.Sequential(
-            nn.ConvTranspose2d(hidden_channels[-2], hidden_channels[-1], kernel_size=(3,3), stride=2, padding=1, output_padding=1),
-            nn.Sigmoid()
+            nn.ConvTranspose2d(hidden_channels[-2], hidden_channels[-1], kernel_size=(3,3), stride=2, padding=1, output_padding=1, bias=False),
+            nn.Tanh()
         ))
 
 
     def create_generator_block(self, input_channels, output_channels):
         return nn.Sequential(
-            nn.ConvTranspose2d(input_channels, output_channels, kernel_size=(3,3), stride=2, padding=1, output_padding=1),
+            nn.ConvTranspose2d(input_channels, output_channels, kernel_size=(3,3), stride=2, padding=1, output_padding=1, bias=False),
             nn.ReLU(),
             nn.BatchNorm2d(output_channels)
         )
@@ -51,18 +53,18 @@ class Discriminatior(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList()
 
-        self.layers.append(nn.Conv2d(hidden_channels[0], hidden_channels[1], kernel_size=(3,3), stride=2, padding=1))
+        self.layers.append(nn.Conv2d(hidden_channels[0], hidden_channels[1], kernel_size=(3,3), stride=2, padding=1, bias=False))
         self.layers.append(nn.LeakyReLU(0.2))
 
         for i in range(1, len(hidden_channels) - 1):
             self.layers.append(self.create_discriminator_block(hidden_channels[i], hidden_channels[i+1]))
 
-        self.layers.append(nn.Conv2d(hidden_channels[-1], 1, kernel_size=(3,3), stride=2, padding=1))
+        self.layers.append(nn.Conv2d(hidden_channels[-1], 1, kernel_size=(3,3), stride=2, padding=1, bias=False))
         self.layers.append(nn.Sigmoid())
 
     def create_discriminator_block(self, in_channels, out_channels):
         return nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=(3,3), stride=2, padding=1),
+            nn.Conv2d(in_channels, out_channels, kernel_size=(3,3), stride=2, padding=1, bias=False),
             nn.LeakyReLU(0.2),
             nn.BatchNorm2d(out_channels)
         )
