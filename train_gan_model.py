@@ -12,6 +12,7 @@ from torchvision.transforms import v2
 from utils import ModelSaver, TensorDatasetWithAugmentations
 from gan_model import GAN
 import matplotlib.pyplot as plt
+from torchmetrics.image.mifid import MemorizationInformedFrechetInceptionDistance
 
 #TODO: add MIFID(Memorization Informed Frechet Inception Distance) metric
 
@@ -188,11 +189,15 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
         model.train()
         train_discriminator_loss, train_generator_loss = 0, 0
         train_D_x, train_D_G_x = 0, 0
+        train_mifid = MemorizationInformedFrechetInceptionDistance(normalize=True).to(device)
+        train_mifid_value = 0
         
         for real_images in tqdm(train_dataloader):
             bs = real_images.shape[0]
             real_images = real_images.to(device)
             fake_images = model.generator.generate(bs)
+            train_mifid.update((real_images + 1) / 2, real=True)
+            train_mifid.update((fake_images + 1) / 2, real=False)
             
             discriminator_optimizer.zero_grad()
             out_fake = model.discriminator(fake_images.detach())
@@ -214,16 +219,22 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
             generator_loss.backward()
             generator_optimizer.step()
             train_generator_loss += generator_loss.item() * bs
+        train_mifid_value = train_mifid.compute()
+        train_mifid.reset()
         save_visualization_outputs(fake_images[:10].cpu(), visualization_train_path, epoch)
 
         model.eval()
         val_discriminator_loss, val_generator_loss = 0, 0
         val_D_x, val_D_G_x = 0, 0
+        val_mifid = MemorizationInformedFrechetInceptionDistance(normalize=True).to(device)
+        val_mifid_value = 0
         with torch.no_grad():
             for real_images in tqdm(val_dataloader):
                 bs = real_images.shape[0]
                 real_images = real_images.to(device)
                 fake_images = model.generator.generate(bs)
+                val_mifid.update((real_images + 1) / 2, real=True)
+                val_mifid.update((fake_images + 1) / 2, real=False)
                 
                 out_fake = model.discriminator(fake_images)
                 discriminator_loss_fake = loss_fun(out_fake, fake_labels[:bs])
@@ -240,6 +251,8 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
                 generator_loss = loss_fun(out_generator, real_labels[:bs])
                 val_D_G_x += out_generator.sum()
                 val_generator_loss += generator_loss.item() * bs
+        val_mifid_value = val_mifid.compute()
+        val_mifid.reset()
         save_visualization_outputs(fake_images[:10].cpu(), visualization_val_path, epoch)
         
         train_discriminator_loss /= len(train_dataloader.sampler)
@@ -257,10 +270,12 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
             "train_generator_loss": train_generator_loss,
             "train_D_x": train_D_x.item(),
             "train_D_G_x": train_D_G_x.item(),
+            "train_mifid_value": train_mifid_value.item(),
             "val_discriminator_loss": val_discriminator_loss,
             "val_generator_loss": val_generator_loss,
             "val_D_x": val_D_x.item(),
             "val_D_G_x": val_D_G_x.item(),
+            "val_mifid_value": val_mifid_value.item(),
         })
         model_saver.save(model.state_dict(), val_generator_loss)
         best_val_loss = min(best_val_loss, val_generator_loss)
@@ -268,16 +283,18 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
             args.trial.report(val_generator_loss, epoch) 
             if args.trial.should_prune():
                 raise optuna.exceptions.TrialPruned()
-        print('Epoch: {} Train Loss: {:.4f}, {:.4f}, {:.4f}, {:.4f} \
-               Validation Loss: {:.4f}, {:.4f}, {:.4f}, {:.4f} '.format(epoch,
+        print('Epoch: {} Train Loss: {:.4f}, {:.4f}, {:.4f}, {:.4f}, {:.4f} \
+               Validation Loss: {:.4f}, {:.4f}, {:.4f}, {:.4f}, {:.4f} '.format(epoch,
                                                                         train_generator_loss,
                                                                         train_discriminator_loss,
                                                                         train_D_x,
                                                                         train_D_G_x,
+                                                                        train_mifid_value,
                                                                         train_generator_loss,
                                                                         train_discriminator_loss,
                                                                         val_D_x,
-                                                                        val_D_G_x))
+                                                                        val_D_G_x,
+                                                                        val_mifid_value))
     return history, best_val_loss
 
 
