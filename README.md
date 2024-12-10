@@ -17,3 +17,11 @@ Run `prepare_dataset.py` script to:
 - Save sets as numpy ".npy" files
 
 When running script, you have to specify destination directory, where created sets will be saved by setting `--destination` parameter. Make sure to create separate directory for that, because at the end of the script its content will be cleared, as there are many intermediate files created during preparing the dataset.
+
+
+
+# links
+https://arxiv.org/pdf/1511.06434v2
+https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
+https://github.com/soumith/ganhacks
+https://arxiv.org/pdf/1312.6114
