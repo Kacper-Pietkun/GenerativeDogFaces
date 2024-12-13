@@ -110,9 +110,33 @@ class MetricsTracker:
             raise AssertionError(f"Metric: '{metric_name}' was not registered")
         
         metric = self.metrics[metric_name]
-        if is_train:
-            return [a / b for a, b in zip(metric.train_values, metric.train_sizes)]
-        return [a / b for a, b in zip(metric.val_values, metric.val_values)]
+        target_values = metric.train_values if is_train else metric.val_values
+        target_sizes = metric.train_sizes if is_train else metric.val_sizes
+        
+        return [a / b for a, b in zip(target_values, target_sizes)]
+    
+
+    def get_metric(self, metric_name, epoch, is_train):
+        if metric_name not in self.metrics.keys():
+            raise AssertionError(f"Metric: '{metric_name}' was not registered")
+        
+        metric = self.metrics[metric_name]
+        target_values = metric.train_values if is_train else metric.val_values
+        target_sizes = metric.train_sizes if is_train else metric.val_sizes
+
+        return target_values[epoch] / target_sizes[epoch]
+    
+    def get_best_value_of_metric(self, metric_name, minimize, is_train):
+        if metric_name not in self.metrics.keys():
+            raise AssertionError(f"Metric: '{metric_name}' was not registered")
+        
+        metric = self.metrics[metric_name]
+        target_values = metric.train_values if is_train else metric.val_values
+        target_sizes = metric.train_sizes if is_train else metric.val_sizes
+
+        if minimize:
+            return min([a / b for a, b in zip(target_values, target_sizes)])
+        return max([a / b for a, b in zip(target_values, target_sizes)])
 
 
 class Visualizator:
@@ -124,6 +148,7 @@ class Visualizator:
 
     def plot_images(self, predicted_images, epoch, is_train, rows=3, cols=4):
         save_path = self.train_path if is_train else self.val_path
+        predicted_images = predicted_images.cpu()
         plt.ioff()
         fig = plt.figure(figsize=(18, 12))
         for idx, img in enumerate(predicted_images, 1):
