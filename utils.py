@@ -79,7 +79,7 @@ class MetricsTracker:
         self.index += 1
         return (metric.name, 
                 [a / b for a, b in zip(metric.train_values, metric.train_sizes)],
-                [a / b for a, b in zip(metric.val_values, metric.val_values)],
+                [a / b for a, b in zip(metric.val_values, metric.val_sizes)],
                 metric.is_plotable)
 
     def register_metric(self, metric_name, is_plotable=True):
@@ -137,6 +137,23 @@ class MetricsTracker:
         if minimize:
             return min([a / b for a, b in zip(target_values, target_sizes)])
         return max([a / b for a, b in zip(target_values, target_sizes)])
+    
+    def log_last_epoch(self):
+        metric_names = []
+        train_values = []
+        val_values = []
+
+        for name, metric in self.metrics.items():
+            metric_names.append(name)
+            train_values.append(metric.train_values[-1] / metric.train_sizes[-1])
+            val_values.append(metric.val_values[-1] / metric.val_sizes[-1])
+
+        train_values = [str(round(x, 3)) for x in train_values]
+        val_values = [str(round(x, 3)) for x in val_values]
+        epoch = len(next(iter(self.metrics.values())).train_values) - 1
+        msg = f"Epoch: {epoch} | ({', '.join(metric_names)}) | Train: {', '.join(train_values)} | Val: {', '.join(val_values)}"
+        print(msg)
+
 
 
 class Visualizator:
