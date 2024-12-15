@@ -4,17 +4,12 @@ import optuna
 import torch
 from tqdm import tqdm
 import torch.nn as nn
-from torch.utils.data import DataLoader
-import numpy as np
-import torch.optim as optim
 from argparse import ArgumentParser
-from torchvision.transforms import v2
-from utils import ModelSaver, TensorDatasetWithAugmentations
+from utils import ModelSaver, Visualizator, MetricsTracker, \
+                  create_optimizer, create_dataloaders, get_device
 from gan_model import GAN
-import matplotlib.pyplot as plt
 from torchmetrics.image.mifid import MemorizationInformedFrechetInceptionDistance
 
-#TODO: add MIFID(Memorization Informed Frechet Inception Distance) metric
 
 parser = ArgumentParser("Training script for GAN")
 
@@ -51,264 +46,105 @@ parser.add_argument("--noise-dimension", type=int, default=100,
 parser.add_argument("--batch-size", type=int, default=128,
                     help="training batch size")
 
-def get_device(use_gpu):
-    if use_gpu:
-        if torch.cuda.is_available():
-            device = torch.device(f"cuda:0")
-        else:
-            raise ValueError("GPU training was chosen but cuda is not available")
-    else:
-        device = torch.device("cpu")
-    return device
 
-def create_dataloaders(args):
-    train_augmentations = get_augmentations(args, is_train=True)
-    train_set_path = os.path.join(args.dataset_path, "train_images.npy")
-    train_set = np.load(train_set_path)
-    train_dataset = TensorDatasetWithAugmentations(train_set, train_augmentations)
-
-    test_augmentations = get_augmentations(args, is_train=False)
-    validation_set_path = os.path.join(args.dataset_path, "validation_images.npy")
-    validation_set = np.load(validation_set_path)
-    validation_dataset = TensorDatasetWithAugmentations(validation_set, test_augmentations)
-
-    test_set_path = os.path.join(args.dataset_path, "test_images.npy")
-    test_set = np.load(test_set_path)
-    test_dataset = TensorDatasetWithAugmentations(test_set, test_augmentations)
-
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_dataloader = DataLoader(validation_dataset, batch_size=args.batch_size, shuffle=False)
-    test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-
-    return train_dataloader, val_dataloader, test_dataloader
-
-def create_optimizer(model, args):
-    optimizer = None
-    if args.optimizer == "Adam":
-        optimizer = optim.Adam(model.parameters(), lr=args.lr,
-                               weight_decay=args.weight_decay,
-                               betas=(args.momentum, 0.999))
-    elif args.optimizer == "AdamW":
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr,
-                                weight_decay=args.weight_decay,
-                                betas=(args.momentum, 0.999))
-    elif args.optimizer == "SGD":
-        optimizer = optim.SGD(model.parameters(), lr=args.lr,
-                              weight_decay=args.weight_decay,
-                              momentum=args.momentum)
-    else:
-        raise RuntimeError(f"Specified optimizer: '{args.optimizer}' is not supported")
-    return optimizer
-
-def get_augmentations(args, is_train):
-    if is_train:
-        transforms = v2.Compose([
-            v2.ToDtype(torch.uint8, scale=True),
-            v2.RandomAdjustSharpness(sharpness_factor=3, p=0.5),
-            v2.RandomEqualize(p=0.5),
-            v2.RandomAutocontrast(0.5),
-            v2.RandomHorizontalFlip(p=0.5),
-            v2.ToDtype(torch.float32, scale=True),
-            v2.Lambda(lambda x: x * 2 - 1) 
-        ])
-    else:
-        transforms = v2.Compose([
-            v2.ToDtype(torch.float32, scale=True),
-            v2.Lambda(lambda x: x * 2 - 1) 
-        ])
-
-    return transforms
-
-def save_visualization_outputs(predicted_images, save_path, epoch, rows=3, cols=4):
-    """
-    Use to save image results after each training epoch and validation epoch
-    """
-    plt.ioff()
-    fig = plt.figure(figsize=(18, 12))
-    for idx, img in enumerate(predicted_images, 1):
-        plt.subplot(rows, cols, idx)
-        plt.imshow((img.detach().numpy().transpose((1, 2, 0)) + 1) / 2)
-        plt.axis("off")
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-    plt.savefig(f"{save_path}/{epoch}.jpg")
-    plt.clf()
-    plt.close(fig)
-
-
-def plot_losses(args, history):
-    train_discriminator_losses = [epoch_dict.get("train_discriminator_loss") for epoch_dict in history]
-    train_generator_losses = [epoch_dict.get("train_generator_loss") for epoch_dict in history]
-    plt.figure(figsize=(14, 8))
-    plt.plot(train_discriminator_losses, color="r", label=" train_discriminator_loss")
-    plt.plot(train_generator_losses, color="b", label="train_generator_losses")
-    plt.title("Train losses over epochs")
-    plt.legend()
-    plt.savefig(f"{args.save_path}/train_losses.jpg")
-
-    train_D_x = [epoch_dict.get("train_D_x") for epoch_dict in history]
-    train_D_G_x = [epoch_dict.get("train_D_G_x") for epoch_dict in history]
-    plt.figure(figsize=(14, 8))
-    plt.plot(train_D_x, color="r", label=" train_D_x")
-    plt.plot(train_D_G_x, color="b", label="train_D_G_x")
-    plt.title("Train D_x/D_G_x over epochs")
-    plt.legend()
-    plt.savefig(f"{args.save_path}/train_d_x.jpg")
-
-    val_discriminator_losses = [epoch_dict.get("val_discriminator_loss") for epoch_dict in history]
-    val_generator_losses = [epoch_dict.get("val_generator_loss") for epoch_dict in history]
-    plt.figure(figsize=(14, 8))
-    plt.plot(val_discriminator_losses, color="r", label="val_discriminator_loss")
-    plt.plot(val_generator_losses, color="b", label="val_generator_loss")
-    plt.title("Validation losses over epochs")
-    plt.legend()
-    plt.savefig(f"{args.save_path}/Validation_losses.jpg")
-
-    val_D_x = [epoch_dict.get("val_D_x") for epoch_dict in history]
-    val_D_G_x = [epoch_dict.get("val_D_G_x") for epoch_dict in history]
-    plt.figure(figsize=(14, 8))
-    plt.plot(val_D_x, color="r", label=" val_D_x")
-    plt.plot(val_D_G_x, color="b", label="val_D_G_x")
-    plt.title("Validation D_x/D_G_x over epochs")
-    plt.legend()
-    plt.savefig(f"{args.save_path}/val_d_x.jpg")
-
-
-def train(args, model, train_dataloader, val_dataloader, optimizers, device, model_saver):
+def train(args, model, train_dataloader, val_dataloader, optimizers, device, model_saver, metricks_tracker, visualizator):
     discriminator_optimizer, generator_optimizer = optimizers
-    loss_fun = nn.BCELoss()
-    history = []
-    best_val_loss = math.inf
-    visualization_train_path = os.path.join(args.save_path, "visualization_train")
-    visualization_val_path = os.path.join(args.save_path, "visualization_val")
-
     real_labels = torch.ones(args.batch_size, 1, device=device)
     fake_labels = torch.zeros(args.batch_size, 1, device=device)
+    mifid = MemorizationInformedFrechetInceptionDistance(reset_real_features=False, normalize=True).to(device)
+
+    metricks_tracker.register_metric("generator_loss")
+    metricks_tracker.register_metric("discriminator_loss")
+    metricks_tracker.register_metric("D_x")
+    metricks_tracker.register_metric("D_G_x")
+    metricks_tracker.register_metric("mifid")
 
     for epoch in range(args.epochs):
         model.train()
-        train_discriminator_loss, train_generator_loss = 0, 0
-        train_D_x, train_D_G_x = 0, 0
-        train_mifid = MemorizationInformedFrechetInceptionDistance(normalize=True).to(device)
-        train_mifid_value = 0
         
         for real_images in tqdm(train_dataloader):
             bs = real_images.shape[0]
             real_images = real_images.to(device)
             fake_images = model.generator.generate(bs)
-            train_mifid.update((real_images + 1) / 2, real=True)
-            train_mifid.update((fake_images + 1) / 2, real=False)
+            mifid.update((real_images + 1) / 2, real=True)
+            mifid.update((fake_images + 1) / 2, real=False)
             
             discriminator_optimizer.zero_grad()
             out_fake = model.discriminator(fake_images.detach())
-            discriminator_loss_fake = loss_fun(out_fake, fake_labels[:bs])
-
             out_real = model.discriminator(real_images)
-            discriminator_loss_real = loss_fun(out_real, real_labels[:bs])
-            train_D_x += out_real.sum()
-            train_D_G_x += out_fake.sum()
-            discriminator_loss = discriminator_loss_real + discriminator_loss_fake
+            discriminator_loss = nn.BCELoss()(out_fake, fake_labels[:bs]) + nn.BCELoss()(out_real, real_labels[:bs])
             discriminator_loss.backward()
             discriminator_optimizer.step()
-            train_discriminator_loss += discriminator_loss.item() * bs
+
+            metricks_tracker.update_metric("D_x", out_real.sum().item(), bs, epoch, is_train=True)
+            metricks_tracker.update_metric("D_G_x", out_fake.sum().item(), bs, epoch, is_train=True)
+            metricks_tracker.update_metric("discriminator_loss", discriminator_loss.item() * bs, bs, epoch, is_train=True)
 
             generator_optimizer.zero_grad()
             out_generator = model.discriminator(fake_images)
-            generator_loss = loss_fun(out_generator, real_labels[:bs])
-            train_D_G_x += out_generator.sum()
+            generator_loss = nn.BCELoss()(out_generator, real_labels[:bs])
             generator_loss.backward()
             generator_optimizer.step()
-            train_generator_loss += generator_loss.item() * bs
-        train_mifid_value = train_mifid.compute()
-        train_mifid.reset()
-        save_visualization_outputs(fake_images[:10].cpu(), visualization_train_path, epoch)
+            
+            metricks_tracker.update_metric("D_G_x", out_generator.sum().item(), bs, epoch, is_train=True)
+            metricks_tracker.update_metric("generator_loss", generator_loss.item() * bs, bs, epoch, is_train=True)
+        
+        metricks_tracker.update_metric("mifid", mifid.compute().item(), 1, epoch, is_train=True)
+        mifid.reset()
+        visualizator.plot_images(fake_images[:10], epoch, is_train=True)
 
         model.eval()
-        val_discriminator_loss, val_generator_loss = 0, 0
-        val_D_x, val_D_G_x = 0, 0
-        val_mifid = MemorizationInformedFrechetInceptionDistance(normalize=True).to(device)
-        val_mifid_value = 0
         with torch.no_grad():
             for real_images in tqdm(val_dataloader):
                 bs = real_images.shape[0]
                 real_images = real_images.to(device)
                 fake_images = model.generator.generate(bs)
-                val_mifid.update((real_images + 1) / 2, real=True)
-                val_mifid.update((fake_images + 1) / 2, real=False)
+                mifid.update((real_images + 1) / 2, real=True)
+                mifid.update((fake_images + 1) / 2, real=False)
                 
                 out_fake = model.discriminator(fake_images)
-                discriminator_loss_fake = loss_fun(out_fake, fake_labels[:bs])
-
                 out_real = model.discriminator(real_images)
-                discriminator_loss_real = loss_fun(out_real, real_labels[:bs])
+                discriminator_loss = nn.BCELoss()(out_fake, fake_labels[:bs]) + nn.BCELoss()(out_real, real_labels[:bs])
 
-                val_D_x += out_real.sum()
-                val_D_G_x += out_fake.sum()
-                discriminator_loss = discriminator_loss_real + discriminator_loss_fake
-                val_discriminator_loss += discriminator_loss.item() * bs
-
+                metricks_tracker.update_metric("D_x", out_real.sum().item(), bs, epoch, is_train=False)
+                metricks_tracker.update_metric("D_G_x", out_fake.sum().item(), bs, epoch, is_train=False)
+                metricks_tracker.update_metric("discriminator_loss", discriminator_loss.item() * bs, bs, epoch, is_train=False)
+                
                 out_generator = model.discriminator(fake_images)
-                generator_loss = loss_fun(out_generator, real_labels[:bs])
-                val_D_G_x += out_generator.sum()
-                val_generator_loss += generator_loss.item() * bs
-        val_mifid_value = val_mifid.compute()
-        val_mifid.reset()
-        save_visualization_outputs(fake_images[:10].cpu(), visualization_val_path, epoch)
-        
-        train_discriminator_loss /= len(train_dataloader.sampler)
-        train_generator_loss /= len(train_dataloader.sampler)
-        train_D_x /= len(train_dataloader.sampler)
-        train_D_G_x /= 2 * len(train_dataloader.sampler)
-        val_discriminator_loss /= len(val_dataloader.sampler)
-        val_generator_loss /= len(val_dataloader.sampler)
-        val_D_x /= len(val_dataloader.sampler)
-        val_D_G_x /= 2* len(val_dataloader.sampler)
+                generator_loss = nn.BCELoss()(out_generator, real_labels[:bs])
 
-        history.append({
-            "epoch": epoch,
-            "train_discriminator_loss": train_discriminator_loss,
-            "train_generator_loss": train_generator_loss,
-            "train_D_x": train_D_x.item(),
-            "train_D_G_x": train_D_G_x.item(),
-            "train_mifid_value": train_mifid_value.item(),
-            "val_discriminator_loss": val_discriminator_loss,
-            "val_generator_loss": val_generator_loss,
-            "val_D_x": val_D_x.item(),
-            "val_D_G_x": val_D_G_x.item(),
-            "val_mifid_value": val_mifid_value.item(),
-        })
-        model_saver.save(model.state_dict(), val_generator_loss)
-        best_val_loss = min(best_val_loss, val_generator_loss)
+                metricks_tracker.update_metric("D_G_x", out_generator.sum().item(), bs, epoch, is_train=False)
+                metricks_tracker.update_metric("generator_loss", generator_loss.item() * bs, bs, epoch, is_train=False)
+
+        metricks_tracker.update_metric("mifid", mifid.compute().item(), 1, epoch, is_train=False)
+        mifid.reset()
+        visualizator.plot_images(fake_images[:10], epoch, is_train=False)
+        
+        val_mifid_value = metricks_tracker.get_metric("mifid", epoch, is_train=False)
+        model_saver.save(model.state_dict(), val_mifid_value)
+
         if args.trial:
-            args.trial.report(val_generator_loss, epoch) 
+            args.trial.report(val_mifid_value, epoch) 
             if args.trial.should_prune():
                 raise optuna.exceptions.TrialPruned()
-        print('Epoch: {} Train Loss: {:.4f}, {:.4f}, {:.4f}, {:.4f}, {:.4f} \
-               Validation Loss: {:.4f}, {:.4f}, {:.4f}, {:.4f}, {:.4f} '.format(epoch,
-                                                                        train_generator_loss,
-                                                                        train_discriminator_loss,
-                                                                        train_D_x,
-                                                                        train_D_G_x,
-                                                                        train_mifid_value,
-                                                                        train_generator_loss,
-                                                                        train_discriminator_loss,
-                                                                        val_D_x,
-                                                                        val_D_G_x,
-                                                                        val_mifid_value))
-    return history, best_val_loss
+            
+        metricks_tracker.log_last_epoch()
+    return metricks_tracker.get_best_value_of_metric("mifid", minimize=True, is_train=False)
 
 
 def main(args):
     device = get_device(args.gpu)
-
     gan = GAN(3, args.noise_dimension, device).to(device)
-    train_dataloader, val_dataloader, _ = create_dataloaders(args)
+    train_dataloader, val_dataloader, _ = create_dataloaders(args, use_tanh=True)
     discriminator_optimizer = create_optimizer(gan.discriminator, args)
     generator_optimizer = create_optimizer(gan.generator, args)
     model_saver = ModelSaver(args.save_path)
+    metricks_tracker = MetricsTracker()
+    visualizator = Visualizator(args.save_path, use_tanh=True)
 
-    history, best_val_loss = train(args, gan, train_dataloader, val_dataloader, (discriminator_optimizer, generator_optimizer), device, model_saver)
-    plot_losses(args, history)
+    best_val_loss = train(args, gan, train_dataloader, val_dataloader, (discriminator_optimizer, generator_optimizer),\
+                                    device, model_saver, metricks_tracker, visualizator)
+    visualizator.plot_metrics(metricks_tracker)
 
     return best_val_loss
 
