@@ -37,7 +37,7 @@ class Generator(nn.Module):
     def create_generator_block(self, input_channels, output_channels):
         return nn.Sequential(
             nn.ConvTranspose2d(input_channels, output_channels, kernel_size=(3,3), stride=2, padding=1, output_padding=1, bias=False),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.BatchNorm2d(output_channels)
         )
 

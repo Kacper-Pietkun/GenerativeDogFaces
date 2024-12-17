@@ -49,9 +49,7 @@ parser.add_argument("--batch-size", type=int, default=128,
 
 def train(args, model, train_dataloader, val_dataloader, optimizers, device, model_saver, metricks_tracker, visualizator):
     discriminator_optimizer, generator_optimizer = optimizers
-    real_labels = torch.ones(args.batch_size, 1, device=device)
-    fake_labels = torch.zeros(args.batch_size, 1, device=device)
-    mifid = MemorizationInformedFrechetInceptionDistance(reset_real_features=False, normalize=True).to(device)
+    mifid = MemorizationInformedFrechetInceptionDistance(reset_real_features=True, normalize=True).to(device)
 
     metricks_tracker.register_metric("generator_loss")
     metricks_tracker.register_metric("discriminator_loss")
@@ -66,13 +64,17 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
             bs = real_images.shape[0]
             real_images = real_images.to(device)
             fake_images = model.generator.generate(bs)
+
+            real_labels = torch.FloatTensor(bs, 1).uniform_(0.9, 1.0).to(device)
+            fake_labels = torch.FloatTensor(bs, 1).uniform_(0.0, 0.1).to(device)
+
             mifid.update((real_images + 1) / 2, real=True)
             mifid.update((fake_images + 1) / 2, real=False)
             
             discriminator_optimizer.zero_grad()
             out_fake = model.discriminator(fake_images.detach())
             out_real = model.discriminator(real_images)
-            discriminator_loss = nn.BCELoss()(out_fake, fake_labels[:bs]) + nn.BCELoss()(out_real, real_labels[:bs])
+            discriminator_loss = nn.BCELoss()(out_fake, fake_labels) + nn.BCELoss()(out_real, real_labels)
             discriminator_loss.backward()
             discriminator_optimizer.step()
 
@@ -82,7 +84,7 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
 
             generator_optimizer.zero_grad()
             out_generator = model.discriminator(fake_images)
-            generator_loss = nn.BCELoss()(out_generator, real_labels[:bs])
+            generator_loss = nn.BCELoss()(out_generator, real_labels)
             generator_loss.backward()
             generator_optimizer.step()
             
@@ -99,19 +101,23 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
                 bs = real_images.shape[0]
                 real_images = real_images.to(device)
                 fake_images = model.generator.generate(bs)
+
+                real_labels = torch.FloatTensor(bs, 1).uniform_(0.9, 1.0).to(device)
+                fake_labels = torch.FloatTensor(bs, 1).uniform_(0.0, 0.1).to(device)
+
                 mifid.update((real_images + 1) / 2, real=True)
                 mifid.update((fake_images + 1) / 2, real=False)
                 
                 out_fake = model.discriminator(fake_images)
                 out_real = model.discriminator(real_images)
-                discriminator_loss = nn.BCELoss()(out_fake, fake_labels[:bs]) + nn.BCELoss()(out_real, real_labels[:bs])
+                discriminator_loss = nn.BCELoss()(out_fake, fake_labels) + nn.BCELoss()(out_real, real_labels)
 
                 metricks_tracker.update_metric("D_x", out_real.sum().item(), bs, epoch, is_train=False)
                 metricks_tracker.update_metric("D_G_x", out_fake.sum().item(), bs, epoch, is_train=False)
                 metricks_tracker.update_metric("discriminator_loss", discriminator_loss.item() * bs, bs, epoch, is_train=False)
                 
                 out_generator = model.discriminator(fake_images)
-                generator_loss = nn.BCELoss()(out_generator, real_labels[:bs])
+                generator_loss = nn.BCELoss()(out_generator, real_labels)
 
                 metricks_tracker.update_metric("D_G_x", out_generator.sum().item(), bs, epoch, is_train=False)
                 metricks_tracker.update_metric("generator_loss", generator_loss.item() * bs, bs, epoch, is_train=False)
