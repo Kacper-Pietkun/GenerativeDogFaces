@@ -13,3 +13,7 @@ launch.json
 
 # Private files
 private/
+
+results/*
+
+temp/*
