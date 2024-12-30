@@ -29,6 +29,7 @@ class BetaCyclicalAnnealing():
     (beta determines how much KL divergance factor affects loss function)
     """
     def __init__(self, num_epochs, iterations_for_epoch, number_of_cycles=4, R=0.5):
+        self.iteration = 0
         self.T = num_epochs * iterations_for_epoch
         self.M = number_of_cycles
         self.R = R
@@ -36,8 +37,9 @@ class BetaCyclicalAnnealing():
         self.f_a = 1 / self.R
         self.f_b = 0
 
-    def get_updated_beta(self, iteration):
-        tau = ((iteration - 1) % math.ceil(self.T / self.M)) / (self.T / self.M)
+    def get_updated_beta(self):
+        self.iteration += 1
+        tau = ((self.iteration - 1) % math.ceil(self.T / self.M)) / (self.T / self.M)
         if tau > self.R:
             return 1
         return self.f_a * tau + self.f_b
@@ -155,7 +157,6 @@ class MetricsTracker:
         print(msg)
 
 
-
 class Visualizator:
     def __init__(self, save_path, use_tanh=False):
         self.base_save_path = save_path
@@ -206,7 +207,6 @@ class Augmentator:
         
         test_transforms = [
             v2.ToDtype(torch.float32, scale=True),
-            v2.Lambda(lambda x: x * 2 - 1)
         ]
 
         if use_tanh:
