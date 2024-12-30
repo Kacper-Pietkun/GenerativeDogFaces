@@ -182,6 +182,27 @@ class Visualizator:
         plt.clf()
         plt.close(fig)
 
+    def plot_images_inference(self, predicted_images, show=False, rows=3, cols=4):
+        predicted_images = predicted_images.cpu()
+        if show == False:
+            plt.ioff()
+        fig = plt.figure(figsize=(10, 6))
+        for idx, img in enumerate(predicted_images, 1):
+            plt.subplot(rows, cols, idx)
+            img = img.detach().numpy().transpose((1, 2, 0))
+            if self.use_tanh:
+                img = (img + 1) / 2
+            plt.imshow(img)
+            plt.axis("off")
+        if not os.path.exists(self.base_save_path):
+            os.makedirs(self.base_save_path)
+        plt.savefig(f"{self.base_save_path}/grouped_images.jpg")
+        if show == False:
+            plt.clf()
+            plt.close(fig)
+        else:
+            plt.show()
+
     def plot_metrics(self, metrics_tracker):
         for name, train_values, val_values, is_plotable in metrics_tracker:
             if not is_plotable:
