@@ -41,7 +41,7 @@ parser.add_argument("--momentum", type=float, default=0.5,
                     help="momentum passed to optimizer")
 
 parser.add_argument("--noise-dimension", type=int, default=100,
-                    help="Number of training epochs")
+                    help="Size of the generator's noise input")
 
 parser.add_argument("--batch-size", type=int, default=128,
                     help="training batch size")
