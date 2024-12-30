@@ -140,6 +140,8 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
 
 def main(args):
     device = get_device(args.gpu)
+    print(f"DEVICE NAME: {device}")
+
     gan = GAN(3, args.noise_dimension, device).to(device)
     train_dataloader, val_dataloader, _ = create_dataloaders(args, use_tanh=True)
     discriminator_optimizer = create_optimizer(gan.discriminator, args)
@@ -148,11 +150,11 @@ def main(args):
     metricks_tracker = MetricsTracker()
     visualizator = Visualizator(args.save_path, use_tanh=True)
 
-    best_val_loss = train(args, gan, train_dataloader, val_dataloader, (discriminator_optimizer, generator_optimizer),\
+    best_val_mifid = train(args, gan, train_dataloader, val_dataloader, (discriminator_optimizer, generator_optimizer),\
                                     device, model_saver, metricks_tracker, visualizator)
     visualizator.plot_metrics(metricks_tracker)
 
-    return best_val_loss
+    return best_val_mifid
 
 
 if __name__ == "__main__":
