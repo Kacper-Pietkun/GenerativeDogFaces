@@ -5,7 +5,7 @@ from utils import get_device, Visualizator
 from vae_model import VAE
 
 
-parser = ArgumentParser("Evaluate VAE model - reconstruct images, and generate new random images")
+parser = ArgumentParser("Inference for GAN model - generate new random images using trained generator")
 
 parser.add_argument("--model-path", type=str, required=True,
                     help="Path to the model state dict")
@@ -30,11 +30,12 @@ def main():
     vae.eval()
 
     trained_decoder = vae.decoder
-    sample_means = torch.zeros(12 * args.embedding_size)
-    sample_stds = torch.ones(12 * args.embedding_size)
-    sample_gauss = torch.normal(sample_means, sample_stds).reshape(12, -1).to(device)
-    out = trained_decoder(sample_gauss)
-    visualizator.plot_images_inference(out, show=True)
+    sample_means = torch.zeros(64 * args.embedding_size)
+    sample_stds = torch.ones(64 * args.embedding_size)
+    sample_gauss = torch.normal(sample_means, sample_stds).reshape(64, -1).to(device)
+    with torch.no_grad():
+        out = trained_decoder(sample_gauss)
+    visualizator.plot_images_inference(out, show=True, rows=8, cols=8)
 
 
 if __name__ == "__main__":

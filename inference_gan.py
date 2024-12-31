@@ -5,7 +5,7 @@ from utils import get_device, Visualizator
 from gan_model import GAN
 
 
-parser = ArgumentParser("Evaluate VAE model - reconstruct images, and generate new random images")
+parser = ArgumentParser("Inference for VAE model - generate new random images using trained decoder")
 
 parser.add_argument("--model-path", type=str, required=True,
                     help="Path to the model state dict")
@@ -30,8 +30,9 @@ def main():
     gan.eval()
 
     trained_generator = gan.generator
-    out = trained_generator.generate(12)
-    visualizator.plot_images_inference(out, show=True)
+    with torch.no_grad():
+        out = trained_generator.generate(64)
+    visualizator.plot_images_inference(out, show=True, rows=8, cols=8)
 
 
 if __name__ == "__main__":
