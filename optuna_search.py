@@ -5,13 +5,17 @@ from datetime import datetime
 from argparse import ArgumentParser
 from functools import partial
 from dotmap import DotMap
-from train_vae_model import main as train_model
+from train_vae_model import main as train_vae_model
+from train_gan_model import main as train_gan_model
 
 
 parser = ArgumentParser("Arguments for searching optimal hyperparameters")
 
 parser.add_argument("--n-trials", "--n", type=int, default=100,
                     help="Number of times the model will we trained with different hyperparameters")
+
+parser.add_argument("--model", type=str, required=True, choices=["vae", "gan"],
+                    help="Which model should be tunned")
 
 parser.add_argument("--dataset-path", type=str, required=True,
                     help="Path to the directory where train, val, test sets are stored")
@@ -23,14 +27,19 @@ parser.add_argument("--epochs", type=int, default=100,
                     help="Number of training epochs for each run")
 
 
-def sample_hyperparameters(trial):
+def sample_hyperparameters(trial, args):
     args_dot_map = DotMap()
     args_dot_map.lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
-    args_dot_map.embedding_size = trial.suggest_categorical("embed_size", [64, 128, 256, 512, 1024])
     args_dot_map.optimizer = trial.suggest_categorical("optim", ["Adam", "AdamW", "SGD"])
     args_dot_map.weight_decay = trial.suggest_float("decay", 0, 0.3)
     args_dot_map.momentum = trial.suggest_float("momentum", 0.8, 0.99)
     args_dot_map.batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
+    if args.model == "vae":
+        args_dot_map.embedding_size = trial.suggest_categorical("embed_size", [64, 128, 256, 512, 1024])
+    elif args.model == "gan":
+        args_dot_map.noise_dimension = trial.suggest_categorical("noise_dim", [50, 100, 200, 500, 1000])
+    else:
+        raise RuntimeError(f"Specified model: '{args.model}' is not supported")
     return args_dot_map
 
 
@@ -41,6 +50,8 @@ def update_dot_map_with_args(args_dot_map, trial, args):
     args_dot_map.epochs = args.epochs
     args_dot_map.trial = trial
     args_dot_map.trial_number = trial.number
+    if args.model == "vae":
+        args_dot_map.calc_mifid = False
     return args_dot_map
 
 
@@ -68,10 +79,16 @@ def save_hyperparameters_logs(args_dot_map):
 
 
 def objective_fn(trial, args):
-    args_dot_map = sample_hyperparameters(trial)
+    args_dot_map = sample_hyperparameters(trial, args)
     args_dot_map = update_dot_map_with_args(args_dot_map, trial, args)
     save_hyperparameters_logs(args_dot_map)
-    loss = train_model(args_dot_map)
+    if args.model == "vae":
+        loss = train_vae_model(args_dot_map)
+    elif args.model == "gan":
+        loss = train_gan_model(args_dot_map)
+    else:
+        raise RuntimeError(f"Specified model: '{args.model}' is not supported")
+    
     return loss
 
 
