@@ -68,9 +68,6 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
             real_labels = torch.FloatTensor(bs, 1).uniform_(0.9, 1.0).to(device)
             fake_labels = torch.FloatTensor(bs, 1).uniform_(0.0, 0.1).to(device)
 
-            mifid.update((real_images + 1) / 2, real=True)
-            mifid.update((fake_images + 1) / 2, real=False)
-            
             discriminator_optimizer.zero_grad()
             out_fake = model.discriminator(fake_images.detach())
             out_real = model.discriminator(real_images)
@@ -91,8 +88,6 @@ def train(args, model, train_dataloader, val_dataloader, optimizers, device, mod
             metricks_tracker.update_metric("D_G_x", out_generator.sum().item(), bs, epoch, is_train=True)
             metricks_tracker.update_metric("generator_loss", generator_loss.item() * bs, bs, epoch, is_train=True)
         
-        metricks_tracker.update_metric("mifid", mifid.compute().item(), 1, epoch, is_train=True)
-        mifid.reset()
         visualizator.plot_images(fake_images[:10], epoch, is_train=True)
 
         model.eval()
