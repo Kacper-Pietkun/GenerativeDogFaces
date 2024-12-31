@@ -29,9 +29,6 @@ parser.add_argument("--trial", default=None,
 parser.add_argument("--lr", type=float, default=0.001,
                     help="initial learning rate used during training")
 
-parser.add_argument("--embedding-size", type=int, default=128,
-                    help="size of the VAE's embedding vector")
-
 parser.add_argument("--optimizer", type=str, default="Adam", choices=["Adam", "AdamW", "SGD"],
                     help="optimizer used for model training")
 
@@ -41,8 +38,14 @@ parser.add_argument("--weight-decay", type=float, default=0.0,
 parser.add_argument("--momentum", type=float, default=0.99,
                     help="momentum passed to optimizer")
 
+parser.add_argument("--embedding-size", type=int, default=128,
+                    help="size of the VAE's embedding vector")
+
 parser.add_argument("--batch-size", type=int, default=64,
                     help="training batch size")
+
+parser.add_argument("--calc-mifid", action="store_true",
+                    help="pass this to calculate mifid metric")
 
 
 def loss_fn(original_image, predicted_image, mean, log_var, beta):
@@ -57,12 +60,25 @@ def loss_fn(original_image, predicted_image, mean, log_var, beta):
     return (reconstruction_loss + beta * kl_loss).mean(), reconstruction_loss.mean(), (kl_loss).mean()
 
 
+def sample_images_for_mifid(model, mifid, bs, device):
+    model.eval()
+    decoder = model.decoder
+    with torch.no_grad():
+        sample_means = torch.zeros(bs * args.embedding_size)
+        sample_stds = torch.ones(bs * args.embedding_size)
+        sample_gauss = torch.normal(sample_means, sample_stds).reshape(bs, -1).to(device)
+        out = decoder(sample_gauss)
+        mifid.update(out, real=False)
+
+
 def train(args, model, train_dataloader, val_dataloader, optimizer, device, beta_cyclical_annealing, model_saver, metricks_tracker, visualizator):
     mifid = MemorizationInformedFrechetInceptionDistance(reset_real_features=True, normalize=True).to(device)
 
     metricks_tracker.register_metric("loss")
     metricks_tracker.register_metric("rec_loss")
     metricks_tracker.register_metric("kl_loss")
+    if args.calc_mifid:
+        metricks_tracker.register_metric("mifid")
 
     for epoch in range(args.epochs):
         model.train()
@@ -96,19 +112,30 @@ def train(args, model, train_dataloader, val_dataloader, optimizer, device, beta
                 metricks_tracker.update_metric("loss", loss.item() * bs, bs, epoch, is_train=False)
                 metricks_tracker.update_metric("rec_loss", rec_loss.item() * bs, bs, epoch, is_train=False)
                 metricks_tracker.update_metric("kl_loss", kl_loss.item() * bs, bs, epoch, is_train=False)
+                if args.calc_mifid:
+                    mifid.update(input_image, real=True)
+                    sample_images_for_mifid(model, mifid, bs, device)
 
+        if args.calc_mifid:
+            metricks_tracker.update_metric("mifid", mifid.compute().item(), 1, epoch, is_train=False)
+            mifid.reset()
         visualizator.plot_images(predicted_image[:10], epoch, is_train=False)
         
-        val_loss = metricks_tracker.get_metric("loss", epoch, is_train=False)
-        model_saver.save(model.state_dict(), val_loss)
+        if args.calc_mifid:
+            optimized_metric_name = "mifid"
+        else:
+            optimized_metric_name = "loss"
+
+        optimized_metric = metricks_tracker.get_metric(optimized_metric_name, epoch, is_train=False)
+        model_saver.save(model.state_dict(), optimized_metric)
 
         if args.trial:
-            args.trial.report(val_loss, epoch) 
+            args.trial.report(optimized_metric, epoch) 
             if args.trial.should_prune():
                 raise optuna.exceptions.TrialPruned()
             
         metricks_tracker.log_last_epoch()
-    return metricks_tracker.get_best_value_of_metric("loss", minimize=True, is_train=False)
+    return metricks_tracker.get_best_value_of_metric(optimized_metric_name, minimize=True, is_train=False)
 
 
 def main(args):
@@ -123,11 +150,11 @@ def main(args):
     visualizator = Visualizator(args.save_path, use_tanh=False)
     beta_cyclical_annealing = BetaCyclicalAnnealing(args.epochs, len(train_dataloader))
     
-    best_val_loss = train(args, model, train_dataloader, val_dataloader, optimizer, device, beta_cyclical_annealing, \
+    best_metric = train(args, model, train_dataloader, val_dataloader, optimizer, device, beta_cyclical_annealing, \
                            model_saver, metricks_tracker, visualizator)
     visualizator.plot_metrics(metricks_tracker)
 
-    return best_val_loss
+    return best_metric
 
 
 if __name__ == "__main__":
