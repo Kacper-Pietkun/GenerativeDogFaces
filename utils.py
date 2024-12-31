@@ -107,7 +107,7 @@ class MetricsTracker:
         target_values[epoch] += value
         target_sizes[epoch] += curr_bs
 
-    def get_metric(self, metric_name, is_train):
+    def get_metric_all(self, metric_name, is_train):
         if metric_name not in self.metrics.keys():
             raise AssertionError(f"Metric: '{metric_name}' was not registered")
         
@@ -147,8 +147,14 @@ class MetricsTracker:
 
         for name, metric in self.metrics.items():
             metric_names.append(name)
-            train_values.append(metric.train_values[-1] / metric.train_sizes[-1])
-            val_values.append(metric.val_values[-1] / metric.val_sizes[-1])
+            try:
+                train_values.append(metric.train_values[-1] / metric.train_sizes[-1])
+            except:
+                train_values.append(0)
+            try:
+                val_values.append(metric.val_values[-1] / metric.val_sizes[-1])
+            except:
+                val_values.append(0)
 
         train_values = [str(round(x, 3)) for x in train_values]
         val_values = [str(round(x, 3)) for x in val_values]
